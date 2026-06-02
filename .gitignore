@@ -1,0 +1,11 @@
+venv/
+.env
+baileys_gateway/auth/*
+!baileys_gateway/auth/.gitkeep
+baileys_gateway/data/
+baileys_gateway/node_modules/
+__pycache__/
+*.pyc
+.Python
+node_modules/
+auth/

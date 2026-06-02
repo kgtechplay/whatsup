@@ -1,0 +1,8 @@
+{
+  "name": "whatsup-local",
+  "private": true,
+  "scripts": {
+    "start:gateway": "node baileys_gateway/index.js",
+    "start:python": "uvicorn fastapi_agent.main:app --host 127.0.0.1 --port 8000"
+  }
+}
