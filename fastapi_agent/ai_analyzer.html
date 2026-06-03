@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Analyzer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f2f0e8;
+      --panel: #fffdf8;
+      --ink: #1a2521;
+      --muted: #66736d;
+      --line: #d6d1c6;
+      --accent: #1f6f8b;
+      --accent-strong: #174f64;
+      --accent-soft: #e2f1f7;
+      --success: #1f8f63;
+      --warn: #a1482c;
+      --shadow: 0 22px 54px rgba(22, 26, 25, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(31, 111, 139, 0.16), transparent 30%),
+        linear-gradient(180deg, #fcfaf5 0%, var(--bg) 100%);
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 28px));
+      margin: 16px auto 28px;
+      padding: 20px;
+      background: rgba(255, 253, 248, 0.94);
+      border: 1px solid rgba(214, 209, 198, 0.95);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.9rem, 4vw, 2.8rem);
+      letter-spacing: -0.04em;
+    }
+
+    .subhead {
+      margin: 8px 0 0;
+      color: var(--muted);
+      max-width: 720px;
+    }
+
+    .nav {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .nav a {
+      text-decoration: none;
+      color: var(--ink);
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-weight: 700;
+    }
+
+    .nav a.active {
+      background: var(--accent-soft);
+      border-color: rgba(31, 111, 139, 0.28);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      margin-top: 20px;
+      align-items: end;
+    }
+
+    .field,
+    .composer {
+      display: grid;
+      gap: 8px;
+    }
+
+    label {
+      font-size: 0.88rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    input, textarea, button {
+      font: inherit;
+    }
+
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 96px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 18px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover { background: var(--accent-strong); }
+    button:disabled { opacity: 0.72; cursor: wait; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      overflow: hidden;
+    }
+
+    .card-head {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #f8fbfd 0%, #edf4f7 100%);
+    }
+
+    .card-head h2, .card-head h3 {
+      margin: 0;
+      font-size: 1.02rem;
+    }
+
+    .card-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .list {
+      max-height: 740px;
+      overflow: auto;
+      padding: 8px;
+    }
+
+    .contact {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid transparent;
+      border-radius: 16px;
+      padding: 12px;
+    }
+
+    .contact.active, .contact:hover {
+      background: var(--accent-soft);
+      border-color: rgba(31, 111, 139, 0.24);
+    }
+
+    .contact-name {
+      display: block;
+      font-weight: 700;
+    }
+
+    .contact-meta {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      word-break: break-word;
+    }
+
+    .panel-stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .hero {
+      padding: 18px;
+      background: linear-gradient(180deg, #f9fcff 0%, #eef5fa 100%);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero h2 {
+      margin: 0;
+      font-size: 1.3rem;
+    }
+
+    .hero p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      word-break: break-word;
+    }
+
+    .widget-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .widget-grid .full {
+      grid-column: 1 / -1;
+    }
+
+    .widget-body {
+      padding: 16px;
+      min-height: 140px;
+      white-space: pre-wrap;
+      line-height: 1.7;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.88), rgba(255,253,248,0.96)),
+        repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(23,33,31,0.03) 28px);
+    }
+
+    .widget-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 0;
+    }
+
+    .status {
+      min-height: 1.2rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .status.success { color: var(--success); }
+    .status.error { color: var(--warn); }
+
+    .placeholder { color: var(--muted); }
+
+    .composer {
+      padding: 18px;
+      border-top: 1px solid var(--line);
+      background: #fffdf9;
+    }
+
+    .composer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    @media (max-width: 960px) {
+      .layout,
+      .widget-grid,
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .shell {
+        width: min(100%, calc(100% - 16px));
+        padding: 14px;
+        margin: 8px auto 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div>
+        <h1>AI Analyzer</h1>
+        <p class="subhead">Review the saved conversation, profile fields, and generate an OpenAI-powered summary from the full transcript.</p>
+      </div>
+      <nav class="nav">
+        <a href="/analysis">Conversation Browser</a>
+        <a href="/ai-analyzer" class="active">AI Analyzer</a>
+      </nav>
+    </div>
+
+    <section class="toolbar">
+      <div class="field">
+        <label for="contact-search">Find Contact</label>
+        <input id="contact-search" list="contact-options" placeholder="Search by name or phone number">
+        <datalist id="contact-options"></datalist>
+      </div>
+      <button id="refresh-button" type="button">Refresh List</button>
+    </section>
+
+    <section class="layout">
+      <aside class="card">
+        <div class="card-head">
+          <h2>Analyzable Chats</h2>
+          <p id="contacts-summary">Loading contacts...</p>
+        </div>
+        <div class="list" id="contact-list"></div>
+      </aside>
+
+      <section class="panel-stack">
+        <section class="card">
+          <div class="hero">
+            <h2 id="conversation-name">Select a conversation</h2>
+            <p id="conversation-meta">Pick a contact to review all available analysis fields.</p>
+          </div>
+
+          <div class="widget-grid">
+            <article class="card full">
+              <div class="card-head">
+                <h3>All Messages</h3>
+                <p>Full transcript from <code>all_messages</code>.</p>
+              </div>
+              <div class="widget-body" id="all-messages"><span class="placeholder">No conversation selected yet.</span></div>
+            </article>
+
+            <article class="card">
+              <div class="card-head">
+                <h3>Profile</h3>
+                <p>Current value from <code>profile_creation</code>.</p>
+              </div>
+              <div class="widget-body" id="profile-creation"><span class="placeholder">Blank</span></div>
+            </article>
+
+            <article class="card">
+              <div class="card-head">
+                <h3>Actions</h3>
+                <p>Current value from <code>actions</code>.</p>
+              </div>
+              <div class="widget-body" id="actions"><span class="placeholder">Blank</span></div>
+            </article>
+
+            <article class="card full">
+              <div class="card-head">
+                <h3>Conversation Summary</h3>
+                <p>Stored in <code>conv_summary</code>.</p>
+              </div>
+              <div class="widget-actions">
+                <div class="status" id="summary-status"></div>
+                <button id="generate-button" type="button">Generate</button>
+              </div>
+              <div class="widget-body" id="conv-summary"><span class="placeholder">Blank</span></div>
+            </article>
+          </div>
+
+          <form class="composer" id="send-form">
+            <label for="message-text">Send Message</label>
+            <textarea id="message-text" placeholder="Write a message from this analyzer view..."></textarea>
+            <div class="composer-row">
+              <div class="status" id="send-status"></div>
+              <button id="send-button" type="submit">Send Message</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      contacts: [],
+      selectedChatJid: null,
+    };
+
+    const elements = {
+      search: document.getElementById("contact-search"),
+      options: document.getElementById("contact-options"),
+      list: document.getElementById("contact-list"),
+      summary: document.getElementById("contacts-summary"),
+      name: document.getElementById("conversation-name"),
+      meta: document.getElementById("conversation-meta"),
+      allMessages: document.getElementById("all-messages"),
+      profile: document.getElementById("profile-creation"),
+      convSummary: document.getElementById("conv-summary"),
+      actions: document.getElementById("actions"),
+      summaryStatus: document.getElementById("summary-status"),
+      generateButton: document.getElementById("generate-button"),
+      form: document.getElementById("send-form"),
+      text: document.getElementById("message-text"),
+      sendStatus: document.getElementById("send-status"),
+      sendButton: document.getElementById("send-button"),
+      refreshButton: document.getElementById("refresh-button"),
+    };
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function displayName(contact) {
+      return contact.name || contact.phone_number || contact.chat_jid;
+    }
+
+    function optionLabel(contact) {
+      const parts = [displayName(contact)];
+      if (contact.phone_number && contact.phone_number !== contact.name) {
+        parts.push(contact.phone_number);
+      }
+      if (contact.chat_jid) {
+        parts.push(contact.chat_jid);
+      }
+      return parts.join(" | ");
+    }
+
+    function contactMatches(contact, searchValue) {
+      if (!searchValue) {
+        return true;
+      }
+      const needle = searchValue.trim().toLowerCase();
+      return [contact.name || "", contact.phone_number || "", contact.chat_jid || ""]
+        .some((value) => value.toLowerCase().includes(needle));
+    }
+
+    function setStatus(target, message, kind = "") {
+      target.textContent = message;
+      target.className = `status${kind ? ` ${kind}` : ""}`;
+    }
+
+    function renderContacts() {
+      const searchValue = elements.search.value;
+      const filtered = state.contacts.filter((contact) => contactMatches(contact, searchValue));
+
+      elements.options.innerHTML = "";
+      for (const contact of filtered) {
+        const option = document.createElement("option");
+        option.value = optionLabel(contact);
+        elements.options.appendChild(option);
+      }
+
+      elements.list.innerHTML = "";
+      for (const contact of filtered) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "contact";
+        if (contact.chat_jid === state.selectedChatJid) {
+          button.classList.add("active");
+        }
+        button.innerHTML = `
+          <span class="contact-name">${escapeHtml(displayName(contact))}</span>
+          <span class="contact-meta">${escapeHtml(contact.phone_number || contact.chat_jid || "")}</span>
+        `;
+        button.addEventListener("click", () => selectConversation(contact.chat_jid));
+        elements.list.appendChild(button);
+      }
+
+      elements.summary.textContent = filtered.length
+        ? `${filtered.length} contact${filtered.length === 1 ? "" : "s"} available`
+        : "No contacts match the current search.";
+    }
+
+    function setWidgetText(element, value) {
+      element.innerHTML = value
+        ? escapeHtml(value)
+        : '<span class="placeholder">Blank</span>';
+    }
+
+    function clearConversation() {
+      elements.name.textContent = "Select a conversation";
+      elements.meta.textContent = "Pick a contact to review all available analysis fields.";
+      elements.allMessages.innerHTML = '<span class="placeholder">No conversation selected yet.</span>';
+      setWidgetText(elements.profile, "");
+      setWidgetText(elements.convSummary, "");
+      setWidgetText(elements.actions, "");
+      setStatus(elements.summaryStatus, "");
+      setStatus(elements.sendStatus, "");
+      renderContacts();
+    }
+
+    async function loadContacts() {
+      elements.refreshButton.disabled = true;
+      try {
+        const response = await fetch("/analysis/contacts");
+        if (!response.ok) {
+          throw new Error(`Failed to load contacts (${response.status})`);
+        }
+        const payload = await response.json();
+        state.contacts = payload.contacts || [];
+        renderContacts();
+      } catch (error) {
+        elements.summary.textContent = error.message;
+      } finally {
+        elements.refreshButton.disabled = false;
+      }
+    }
+
+    async function selectConversation(chatJid) {
+      state.selectedChatJid = chatJid;
+      renderContacts();
+      setStatus(elements.summaryStatus, "");
+      setStatus(elements.sendStatus, "");
+      elements.allMessages.textContent = "Loading conversation...";
+
+      try {
+        const response = await fetch(`/analysis/conversation?chat_jid=${encodeURIComponent(chatJid)}`);
+        if (!response.ok) {
+          throw new Error(`Failed to load conversation (${response.status})`);
+        }
+        const conversation = await response.json();
+        elements.name.textContent = displayName(conversation);
+        elements.meta.textContent = [conversation.phone_number || "", conversation.chat_jid || ""]
+          .filter(Boolean)
+          .join(" | ");
+        setWidgetText(elements.allMessages, conversation.all_messages || "");
+        setWidgetText(elements.profile, conversation.profile_creation || "");
+        setWidgetText(elements.convSummary, conversation.conv_summary || "");
+        setWidgetText(elements.actions, conversation.actions || "");
+      } catch (error) {
+        elements.allMessages.innerHTML = '<span class="placeholder">Unable to load conversation.</span>';
+        setStatus(elements.summaryStatus, error.message, "error");
+      }
+    }
+
+    function findContactFromInput() {
+      const searchValue = elements.search.value.trim().toLowerCase();
+      if (!searchValue) {
+        return null;
+      }
+      return state.contacts.find((contact) => optionLabel(contact).toLowerCase() === searchValue)
+        || state.contacts.find((contact) => contactMatches(contact, searchValue));
+    }
+
+    async function generateSummary() {
+      if (!state.selectedChatJid) {
+        setStatus(elements.summaryStatus, "Select a conversation first.", "error");
+        return;
+      }
+
+      elements.generateButton.disabled = true;
+      setStatus(elements.summaryStatus, "Generating summary...");
+
+      try {
+        const response = await fetch("/analysis/summary/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_jid: state.selectedChatJid }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || `Failed to generate summary (${response.status})`);
+        }
+
+        setWidgetText(elements.convSummary, payload.conv_summary || "");
+        setStatus(elements.summaryStatus, "Summary generated.", "success");
+      } catch (error) {
+        setStatus(elements.summaryStatus, error.message, "error");
+      } finally {
+        elements.generateButton.disabled = false;
+      }
+    }
+
+    async function sendMessage(event) {
+      event.preventDefault();
+      const contact = state.contacts.find((item) => item.chat_jid === state.selectedChatJid);
+      if (!contact) {
+        setStatus(elements.sendStatus, "Select a conversation before sending a message.", "error");
+        return;
+      }
+
+      const text = elements.text.value.trim();
+      if (!text) {
+        setStatus(elements.sendStatus, "Write a message first.", "error");
+        return;
+      }
+
+      elements.sendButton.disabled = true;
+      setStatus(elements.sendStatus, "Sending...");
+
+      try {
+        const response = await fetch("/messages/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: contact.chat_jid, text }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || `Failed to send message (${response.status})`);
+        }
+
+        elements.text.value = "";
+        setStatus(elements.sendStatus, "Message sent.", "success");
+      } catch (error) {
+        setStatus(elements.sendStatus, error.message, "error");
+      } finally {
+        elements.sendButton.disabled = false;
+      }
+    }
+
+    elements.search.addEventListener("input", () => {
+      renderContacts();
+      const exactMatch = findContactFromInput();
+      if (exactMatch && exactMatch.chat_jid !== state.selectedChatJid) {
+        selectConversation(exactMatch.chat_jid);
+      }
+    });
+
+    elements.search.addEventListener("change", () => {
+      const matched = findContactFromInput();
+      if (matched) {
+        selectConversation(matched.chat_jid);
+      }
+    });
+
+    elements.generateButton.addEventListener("click", generateSummary);
+    elements.refreshButton.addEventListener("click", loadContacts);
+    elements.form.addEventListener("submit", sendMessage);
+
+    loadContacts();
+    clearConversation();
+  </script>
+</body>
+</html>

@@ -41,46 +41,103 @@ def normalize_timestamp(value: Optional[Any]) -> datetime:
     return utc_now()
 
 
+def extract_phone_number_from_jid(jid: Optional[str]) -> Optional[str]:
+    if not jid or not isinstance(jid, str):
+        return None
+
+    trimmed = jid.strip()
+    if not trimmed:
+        return None
+
+    user = trimmed.split("@", 1)[0]
+    normalized_user = user.split(":", 1)[0].strip()
+    digits_only = "".join(ch for ch in normalized_user if ch.isdigit())
+    if not digits_only:
+        return None
+
+    return f"+{digits_only}"
+
+
+def extract_phone_number(message: Dict[str, Any]) -> Optional[str]:
+    raw_json = message.get("raw_json")
+    if isinstance(raw_json, dict):
+        key = raw_json.get("key")
+        if isinstance(key, dict):
+            remote_jid_alt = key.get("remoteJidAlt")
+            phone_number = extract_phone_number_from_jid(remote_jid_alt)
+            if phone_number:
+                return phone_number
+
+    return extract_phone_number_from_jid(message.get("sender_jid"))
+
+
 class WhatsAppMessageRepository:
     def __init__(self) -> None:
         self.conninfo = (
             f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} "
             f"host={DB_HOST} port={DB_PORT}"
         )
+        self._phone_number_column_checked = False
 
     def _connect(self):
         return psycopg.connect(self.conninfo, row_factory=dict_row)
 
+    def ensure_phone_number_column(self) -> None:
+        if self._phone_number_column_checked:
+            return
+
+        query = """
+            ALTER TABLE msg_schema.whatsapp_messages
+            ADD COLUMN IF NOT EXISTS phone_number TEXT
+        """
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+            conn.commit()
+
+        self._phone_number_column_checked = True
+
     def get_message_by_message_id(
         self, message_id: str, chat_jid: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
+        self.ensure_phone_number_column()
         query = """
             SELECT
                 id,
                 message_id,
                 chat_jid,
+                phone_number,
                 from_me,
                 message_timestamp,
                 message_type,
                 message_text
             FROM msg_schema.whatsapp_messages
             WHERE message_id = %s
-              AND (%s IS NULL OR chat_jid = %s)
-            ORDER BY id DESC
-            LIMIT 1
         """
+        params: tuple[Any, ...] = (message_id,)
+
+        if chat_jid is None:
+            query += "\n  AND chat_jid IS NULL"
+        else:
+            query += "\n  AND chat_jid = %s"
+            params = (message_id, chat_jid)
+
+        query += "\nORDER BY id DESC\nLIMIT 1"
 
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, (message_id, chat_jid, chat_jid))
+                cur.execute(query, params)
                 return cur.fetchone()
 
     def insert_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        self.ensure_phone_number_column()
         now = utc_now()
         payload = {
             "message_id": message["message_id"],
             "chat_jid": message["chat_jid"],
             "sender_jid": message.get("sender_jid"),
+            "phone_number": extract_phone_number(message),
             "participant_jid": message.get("participant_jid"),
             "from_me": bool(message.get("from_me", False)),
             "message_timestamp": normalize_timestamp(message.get("message_timestamp")),
@@ -118,6 +175,7 @@ class WhatsAppMessageRepository:
                 message_id,
                 chat_jid,
                 sender_jid,
+                phone_number,
                 participant_jid,
                 from_me,
                 message_timestamp,
@@ -153,6 +211,7 @@ class WhatsAppMessageRepository:
                 %(message_id)s,
                 %(chat_jid)s,
                 %(sender_jid)s,
+                %(phone_number)s,
                 %(participant_jid)s,
                 %(from_me)s,
                 %(message_timestamp)s,
@@ -184,7 +243,7 @@ class WhatsAppMessageRepository:
                 %(push_name)s,
                 %(raw_json)s::jsonb
             )
-            RETURNING id, message_id, chat_jid, from_me, message_timestamp, message_type, message_text
+            RETURNING id, message_id, chat_jid, sender_jid, phone_number, from_me, message_timestamp, message_type, message_text
         """
 
         with self._connect() as conn:
@@ -206,12 +265,14 @@ class WhatsAppMessageRepository:
         return {**created, "inserted": True}
 
     def fetch_messages(self, limit: int = 20) -> List[Dict[str, Any]]:
+        self.ensure_phone_number_column()
         query = """
             SELECT
                 id,
                 message_id,
                 chat_jid,
                 sender_jid,
+                phone_number,
                 participant_jid,
                 from_me,
                 message_timestamp,
@@ -230,3 +291,91 @@ class WhatsAppMessageRepository:
             with conn.cursor() as cur:
                 cur.execute(query, (limit,))
                 return cur.fetchall()
+
+    def fetch_message_analysis_contacts(
+        self, excluded_phone_number: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        query = """
+            SELECT
+                id,
+                name,
+                phone_number,
+                chat_jid,
+                updated_at
+            FROM msg_schema.message_analysis
+            WHERE chat_jid IS NOT NULL
+            ORDER BY
+                CASE
+                    WHEN COALESCE(NULLIF(name, ''), NULLIF(phone_number, ''), chat_jid) IS NULL
+                        THEN 1
+                    ELSE 0
+                END,
+                LOWER(COALESCE(NULLIF(name, ''), NULLIF(phone_number, ''), chat_jid)),
+                id
+        """
+        params: tuple[Any, ...] = ()
+
+        if excluded_phone_number is not None:
+            query = query.replace(
+                "ORDER BY",
+                "  AND COALESCE(phone_number, '') <> %s\n            ORDER BY",
+                1,
+            )
+            params = (excluded_phone_number,)
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                return cur.fetchall()
+
+    def get_message_analysis_by_chat_jid(self, chat_jid: str) -> Optional[Dict[str, Any]]:
+        query = """
+            SELECT
+                id,
+                name,
+                phone_number,
+                chat_jid,
+                all_messages,
+                profile_creation,
+                conv_summary,
+                actions,
+                created_at,
+                updated_at
+            FROM msg_schema.message_analysis
+            WHERE chat_jid = %s
+            ORDER BY id
+            LIMIT 1
+        """
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (chat_jid,))
+                return cur.fetchone()
+
+    def update_message_analysis_summary(
+        self, chat_jid: str, conv_summary: str
+    ) -> Optional[Dict[str, Any]]:
+        query = """
+            UPDATE msg_schema.message_analysis
+            SET conv_summary = %s,
+                updated_at = NOW()
+            WHERE chat_jid = %s
+            RETURNING
+                id,
+                name,
+                phone_number,
+                chat_jid,
+                all_messages,
+                profile_creation,
+                conv_summary,
+                actions,
+                created_at,
+                updated_at
+        """
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, (conv_summary, chat_jid))
+                row = cur.fetchone()
+            conn.commit()
+        return row

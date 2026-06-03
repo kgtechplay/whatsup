@@ -47,11 +47,21 @@ Important defaults:
 - `POSTGRES_PORT=5432`
 - `POSTGRES_USER=postgres`
 - `POSTGRES_PASSWORD=postgres`
+- `OPENAI_API_KEY=...`
+- `OPENAI_MODEL=gpt-5.5`
 
 ## 3. Start the Python service
 
+From the project root:
+
 ```powershell
 npm run start:python
+```
+
+Direct equivalent:
+
+```powershell
+uvicorn fastapi_agent.main:app --host 127.0.0.1 --port 8000
 ```
 
 FastAPI will run on:
@@ -60,12 +70,23 @@ FastAPI will run on:
 http://127.0.0.1:8000
 ```
 
+UI pages:
+
+- `http://127.0.0.1:8000/analysis`
+- `http://127.0.0.1:8000/ai-analyzer`
+
 ## 4. Start the Baileys gateway
 
 Open a second terminal in the project root and run:
 
 ```powershell
 npm run start:gateway
+```
+
+Direct equivalent:
+
+```powershell
+node baileys_gateway/index.js
 ```
 
 The gateway will run on:
@@ -88,6 +109,11 @@ FastAPI:
 - `GET /gateway/status`
 - `GET /messages`
 - `GET /messages?source=db`
+- `GET /analysis`
+- `GET /ai-analyzer`
+- `GET /analysis/contacts`
+- `GET /analysis/conversation?chat_jid=...`
+- `POST /analysis/summary/generate`
 - `POST /messages/send`
 
 Gateway:
@@ -119,3 +145,6 @@ POST http://127.0.0.1:8000/messages/send
 - Recent gateway messages are stored in `baileys_gateway/data/messages.json`.
 - The Python in-memory buffer resets when the FastAPI app restarts.
 - The durable message store is PostgreSQL table `msg_schema.whatsapp_messages`.
+- Conversation analysis data is read from `msg_schema.message_analysis`.
+- AI prompts are stored in `prompts/`. The summary prompt file is `prompts/create_summary.md`.
+- The AI Analyzer summary action calls OpenAI server-side, so `OPENAI_API_KEY` must be present in `.env`.

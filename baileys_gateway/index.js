@@ -107,6 +107,23 @@ function normalizeJid(recipient) {
   return `${digits}@s.whatsapp.net`
 }
 
+function normalizeStoredJid(jid) {
+  if (!jid || typeof jid !== 'string') {
+    return jid || null
+  }
+
+  const trimmed = jid.trim()
+  const atIndex = trimmed.indexOf('@')
+  if (atIndex === -1) {
+    return trimmed
+  }
+
+  const user = trimmed.slice(0, atIndex)
+  const domain = trimmed.slice(atIndex + 1)
+  const normalizedUser = user.includes(':') ? user.split(':')[0] : user
+  return `${normalizedUser}@${domain}`
+}
+
 function extractText(message) {
   if (!message) {
     return ''
@@ -190,9 +207,9 @@ function buildMessageEntry(incoming, selfJid = null) {
   const media = extractMediaDetails(content)
   const reaction = content?.reactionMessage
   const fromMe = Boolean(incoming.key.fromMe)
-  const remoteJid = incoming.key.remoteJid
-  const participantJid = incoming.key.participant || null
-  const senderJid = fromMe ? selfJid || remoteJid : participantJid || remoteJid
+  const remoteJid = normalizeStoredJid(incoming.key.remoteJid)
+  const participantJid = normalizeStoredJid(incoming.key.participant || null)
+  const senderJid = normalizeStoredJid(fromMe ? selfJid || remoteJid : participantJid || remoteJid)
 
   return {
     message_id: incoming.key.id,
@@ -216,7 +233,7 @@ function buildMessageEntry(incoming, selfJid = null) {
     is_forwarded: Boolean(contextInfo?.isForwarded),
     is_ephemeral: Boolean(incoming.message?.ephemeralMessage),
     quoted_message_id: contextInfo?.stanzaId || null,
-    quoted_sender_jid: contextInfo?.participant || null,
+    quoted_sender_jid: normalizeStoredJid(contextInfo?.participant || null),
     quoted_text: contextInfo?.quotedMessage
       ? extractText(contextInfo.quotedMessage)
       : null,
@@ -417,7 +434,12 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         to: jid,
         id: result?.key?.id || null,
-        me: sock?.user || null,
+        me: sock?.user
+          ? {
+              ...sock.user,
+              id: normalizeStoredJid(sock.user.id),
+            }
+          : null,
         messageType: 'conversation',
         messageStatus: 'sent',
         messageTimestamp: Date.now(),

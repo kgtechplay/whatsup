@@ -1,14 +1,24 @@
 from collections import deque
 import os
+from pathlib import Path
 from typing import Any, Deque, Dict, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 load_dotenv()
 
-from fastapi_agent.database import WhatsAppMessageRepository, utc_now
+from fastapi_agent.database import (
+    WhatsAppMessageRepository,
+    extract_phone_number_from_jid,
+    utc_now,
+)
+from fastapi_agent.openai_analyzer import (
+    OpenAIAnalyzerError,
+    generate_conversation_summary,
+)
 from fastapi_agent.whatsapp_client import WhatsAppGatewayClient
 
 
@@ -55,13 +65,32 @@ class MessageRecord(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class GenerateSummaryRequest(BaseModel):
+    chat_jid: str = Field(..., min_length=1)
+
+
 GATEWAY_URL = os.getenv("BAILEYS_GATEWAY_URL", "http://127.0.0.1:3001")
 MAX_BUFFERED_MESSAGES = int(os.getenv("MAX_BUFFERED_MESSAGES", "200"))
 gateway = WhatsAppGatewayClient(GATEWAY_URL)
 repository = WhatsAppMessageRepository()
 recent_messages: Deque[Dict] = deque(maxlen=MAX_BUFFERED_MESSAGES)
+UI_PAGE_PATH = Path(__file__).with_name("message_browser.html")
+AI_ANALYZER_PAGE_PATH = Path(__file__).with_name("ai_analyzer.html")
 
 app = FastAPI(title="Whatsup Agent")
+
+
+def normalize_stored_jid(jid: Optional[str]) -> Optional[str]:
+    if not jid or not isinstance(jid, str):
+        return jid
+
+    trimmed = jid.strip()
+    if "@" not in trimmed:
+        return trimmed
+
+    user, domain = trimmed.split("@", 1)
+    normalized_user = user.split(":", 1)[0]
+    return f"{normalized_user}@{domain}"
 
 
 def save_message_to_db(entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -84,6 +113,71 @@ def fetch_messages_from_db(limit: int) -> Dict[str, Any]:
         ) from exc
 
 
+def get_gateway_phone_number() -> Optional[str]:
+    try:
+        status = gateway.status()
+    except Exception:
+        return None
+
+    me = status.get("me")
+    if not isinstance(me, dict):
+        return None
+
+    me_id = me.get("id")
+    return extract_phone_number_from_jid(normalize_stored_jid(me_id))
+
+
+def fetch_message_analysis_contacts() -> Dict[str, Any]:
+    try:
+        excluded_phone_number = get_gateway_phone_number()
+        contacts = repository.fetch_message_analysis_contacts(
+            excluded_phone_number=excluded_phone_number
+        )
+        return {
+            "contacts": contacts,
+            "excluded_phone_number": excluded_phone_number,
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read message analysis contacts from PostgreSQL: {exc}",
+        ) from exc
+
+
+def fetch_message_analysis_conversation(chat_jid: str) -> Dict[str, Any]:
+    try:
+        conversation = repository.get_message_analysis_by_chat_jid(chat_jid)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read conversation from PostgreSQL: {exc}",
+        ) from exc
+
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return conversation
+
+
+def generate_summary_for_conversation(chat_jid: str) -> Dict[str, Any]:
+    conversation = fetch_message_analysis_conversation(chat_jid)
+    try:
+        summary = generate_conversation_summary(conversation.get("all_messages"))
+        updated = repository.update_message_analysis_summary(chat_jid, summary)
+    except OpenAIAnalyzerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate conversation summary: {exc}",
+        ) from exc
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return updated
+
+
 @app.get("/health")
 def health():
     return {
@@ -92,6 +186,17 @@ def health():
         "gateway_url": GATEWAY_URL,
         "postgres_db": os.getenv("POSTGRES_DB", "whatsapp_db"),
     }
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/analysis", response_class=HTMLResponse)
+def analysis_page():
+    return HTMLResponse(UI_PAGE_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/ai-analyzer", response_class=HTMLResponse)
+def ai_analyzer_page():
+    return HTMLResponse(AI_ANALYZER_PAGE_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/gateway/health")
@@ -116,14 +221,33 @@ def list_messages(limit: int = 20, source: str = "buffer"):
     return {"messages": buffered[:limit], "source": "buffer"}
 
 
+@app.get("/analysis/contacts")
+def list_message_analysis_contacts():
+    return fetch_message_analysis_contacts()
+
+
+@app.get("/analysis/conversation")
+def get_message_analysis_conversation(chat_jid: str):
+    return fetch_message_analysis_conversation(chat_jid)
+
+
+@app.post("/analysis/summary/generate")
+def generate_message_analysis_summary(payload: GenerateSummaryRequest):
+    return generate_summary_for_conversation(payload.chat_jid)
+
+
 @app.post("/messages/send")
 def send_message(payload: SendMessageRequest):
     gateway_response = gateway.send_text(payload.to, payload.text)
     now = utc_now()
     record = MessageRecord(
         message_id=gateway_response.get("id") or f"local-{int(now.timestamp() * 1000)}",
-        chat_jid=gateway_response.get("to") or payload.to,
-        sender_jid=gateway_response.get("me", {}).get("id") if isinstance(gateway_response.get("me"), dict) else None,
+        chat_jid=normalize_stored_jid(gateway_response.get("to") or payload.to),
+        sender_jid=normalize_stored_jid(
+            gateway_response.get("me", {}).get("id")
+            if isinstance(gateway_response.get("me"), dict)
+            else None
+        ),
         from_me=True,
         message_timestamp=gateway_response.get("messageTimestamp") or now,
         received_at=now,
@@ -155,6 +279,10 @@ def send_message(payload: SendMessageRequest):
 @app.post("/webhook/messages")
 def receive_message(message: MessageRecord):
     entry = message.model_dump()
+    entry["chat_jid"] = normalize_stored_jid(entry.get("chat_jid"))
+    entry["sender_jid"] = normalize_stored_jid(entry.get("sender_jid"))
+    entry["participant_jid"] = normalize_stored_jid(entry.get("participant_jid"))
+    entry["quoted_sender_jid"] = normalize_stored_jid(entry.get("quoted_sender_jid"))
     recent_messages.appendleft(entry)
     saved = save_message_to_db(entry)
     return {"ok": True, "buffered_messages": len(recent_messages), "database": saved}
